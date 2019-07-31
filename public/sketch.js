@@ -4,77 +4,34 @@ const process = require("child_process");
 var parentChart;
 var chart;
 var backgroundSliceStack = [];
+var enlistmentRoot;
+
+var textGraphics;
 
 function setup() {
-	var enlistmentRoot = runFilePicker();
+	enlistmentRoot = runFilePicker();
 	console.log(enlistmentRoot);
-
-	var command = "gvfs health " + enlistmentRoot;
-	process.exec(command, (error, stdout, stderr) => {
-		if (error) {
-			console.error(`exec error: ${error}`);
-			return;
-		}
-		console.log(`stdout: ${stdout}`);
-		console.log(`stderr: ${stderr}`);
-	});
 
 	createCanvas(windowWidth, windowHeight);
 	background(255);
 
-	var dirA = new DirectoryInfo("A", 10, 5);
-	var dirB = new DirectoryInfo("B", 10, 7);
-	var dirC = new DirectoryInfo("C", 50, 10);
-	var dirD = new DirectoryInfo("D", 25, 14);
-	var dirE = new DirectoryInfo("E", 15, 12);
-
-	var directories = [dirA, dirB, dirC, dirD, dirE];
-
-	var dir1 = new DirectoryInfo("1", 15, 5);
-	var dir2 = new DirectoryInfo("2", 10, 10);
-	var dir3 = new DirectoryInfo("3", 5, 3);
-
-	var dirDChildren = [dir1, dir2, dir3];
-
-	var slices = [];
-
-	var lastAngle = 0;
-	var newAngle;
-	for (var i = 0; i < directories.length; i++) {
-		newAngle = directories[i].totalFiles * 2 * Math.PI / 110;
-		slices.push(new ChartSlice(lastAngle, lastAngle + newAngle, DEFAULT_RADIUS, directories[i].dirName));
-		let hydrationPercentage = directories[i].hydratedFiles / directories[i].totalFiles;
-		slices[i].color = hydrationColorPicker(hydrationPercentage);
-		lastAngle += newAngle;
-	}
-
-	var childSlices = [];
-	
-	lastAngle = 0;
-	for (i = 0; i < dirDChildren.length; i++) {
-		newAngle = dirDChildren[i].totalFiles * 2 * Math.PI / 30;
-		childSlices.push(new ChartSlice(lastAngle, lastAngle + newAngle, DEFAULT_RADIUS, dirDChildren[i].dirName));
-		childSlices[i].radius = 0;
-		let hydrationPercentage = dirDChildren[i].hydratedFiles / dirDChildren[i].totalFiles;
-		childSlices[i].color = hydrationColorPicker(hydrationPercentage);
-		lastAngle += newAngle;
-	}
-
-	slices[3].childChart = new PieChart(childSlices);
-	slices[3].childChart.parentSlice = slices[3];
-
-	chart = new PieChart(slices);
+	chart = getHealthData();
 	chart.visible = true;
 	parentChart = chart;
 }
 
 function draw() {
 	background(255);
+	if (textGraphics) {
+		textGraphics.remove();
+	}
+	textGraphics = createGraphics(windowWidth, windowHeight);
 	hover(mouseX, mouseY);
 	for (var i = 0; i < backgroundSliceStack.length; i++) {
 		backgroundSliceStack[i].draw();
 	}
 	chart.draw();
+	image(textGraphics, 0, 0);
 }
 
 function mouseClicked() {
@@ -118,4 +75,58 @@ function hydrationColorPicker (hydration) {
 	let green = min(2 * (1 - hydration), 1) * 255;
 	let blue = 0;
 	return color(red, green, blue);
+}
+
+function getHealthData(directory = null) {
+	let command;
+	if (directory == null) {
+		command = "gvfs health " + enlistmentRoot;	
+	} else {
+		command = "gvfs health -d " + directory + " " + enlistmentRoot; 
+	}
+
+	healthOutput = process.execSync(command).toString();
+	let healthOutputLines = healthOutput.split('\n').filter((line) => { return line != ""; });
+	console.log(healthOutputLines);
+
+	let totalFileInfoRegEx = /Total files in HEAD commit:\s*([\d,]+)\s*\|\s*(\d+)%/;
+	let fastFileInfoRegEx = /Files managed by VFS for Git \(fast\):\s*([\d,]+)\s*\|\s*(\d+)%/;
+	let slowFileInfoRegEx = /Files managed by Git:\s*([\d,]+)\s*\|\s*(\d+)%/;
+	let subDirectoryInfoRegEx = /\s*([\d,]+)\s*\/\s*([\d,]+)\s*\|\s*(\S.*\S)\s*/;
+
+	let totalReportedFiles, reportedFastFiles, reportedSlowFiles;
+	let directoryInfos = [];
+
+	[ , totalReportedFiles] = healthOutputLines[2].match(totalFileInfoRegEx);
+	[ , reportedFastFiles] = healthOutputLines[3].match(fastFileInfoRegEx);
+	[ , reportedSlowFiles] = healthOutputLines[4].match(slowFileInfoRegEx);
+
+	for (let i = 0; i < healthOutputLines.length - 8; i++) {
+		let dirHydrationCount, dirFileCount, dirName;
+		[ , dirHydrationCount, dirFileCount, dirName] = healthOutputLines[7 + i].match(subDirectoryInfoRegEx);
+		directoryInfos.push(new DirectoryInfo(dirName, dirFileCount, dirHydrationCount));
+	}
+
+	return pieChartFromDirectoryInfo(directoryInfos, reportedFastFiles + reportedSlowFiles, totalReportedFiles);
+}
+
+function pieChartFromDirectoryInfo(directoryInfos, totalHydratedFiles, totalFiles) {
+	let lastAngle = 0;
+	let newAngle;
+	let slices = [];
+	let accountedHydration = 0;
+
+	for (let i = 0; i < directoryInfos.length; i++) {
+		newAngle = directoryInfos[i].totalFiles * 2 * Math.PI / totalFiles;
+		slices.push(new ChartSlice(lastAngle, lastAngle + newAngle, DEFAULT_RADIUS, directoryInfos[i].dirName));
+		let hydrationPercentage = directoryInfos[i].hydratedFiles / directoryInfos[i].totalFiles;
+		accountedHydration += directoryInfos[i].hydratedFiles;
+		slices[i].color = hydrationColorPicker(hydrationPercentage);
+		lastAngle += newAngle;
+	}
+
+	slices.push(new ChartSlice(lastAngle, 2 * Math.PI, DEFAULT_RADIUS, "Other directories"));
+	slices[slices.length - 1].color = hydrationColorPicker((totalHydratedFiles - accountedHydration) / totalFiles);
+
+	return new PieChart(slices);
 }

@@ -25,6 +25,7 @@ function PieChart(chartSlices, visible) {
             this.chartSlices[this.lastFocused].draw();
         }
         if (this.focused != -1) {
+            textGraphics.clear();
             this.chartSlices[this.focused].draw();
 
             // Draw the child chart on top for the animate out effect to be visible
@@ -122,12 +123,12 @@ function ChartSlice(startAngle, endAngle, radius, label) {
         }
 
         fill(0);
-        textAlign(CENTER, CENTER);
+        textGraphics.textAlign(CENTER, CENTER);
         var labelX = 0.75 * this.radius * cos((this.startAngle + this.endAngle) / 2) + xmod;
         var labelY = 0.75 * this.radius * sin((this.startAngle + this.endAngle) / 2) + ymod;
 
         if (this.radius > DEFAULT_RADIUS / 2) {
-            text(this.label, labelX, labelY);
+            textGraphics.text(this.label, labelX, labelY);
         }
     };
 
